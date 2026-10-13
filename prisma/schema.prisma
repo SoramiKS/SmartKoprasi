@@ -1,0 +1,251 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MEMBER
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  role      Role     @default(MEMBER)
+  member    Member?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  auditRecords               AuditRecord[]
+  savingsTransactionsCreated SavingsTransaction[]  @relation("SavingsTransactionCreator")
+  loanApprovalsCreated       LoanApprovalHistory[] @relation("LoanApprovalCreator")
+  installmentPaymentsCreated InstallmentPayment[]  @relation("InstallmentPaymentCreator")
+  announcementsCreated       Announcement[]        @relation("AnnouncementAuthor")
+  loanPoliciesCreated        LoanPolicy[]          @relation("LoanPolicyCreator")
+  loanCancellationsRequested LoanCancellationRequest[] @relation("LoanCancellationRequester")
+  loanCancellationsReviewed  LoanCancellationRequest[] @relation("LoanCancellationReviewer")
+}
+
+model Member {
+  id             String   @id @default(cuid())
+  userId         String?  @unique
+  user           User?    @relation(fields: [userId], references: [id])
+  memberNumber   String   @unique
+  fullName       String
+  identityNumber String   @unique
+  phone          String
+  address        String
+  joinedAt       DateTime @default(now())
+  status         MemberStatus @default(ACTIVE)
+  
+  savings        SavingsTransaction[]
+  loans          Loan[]
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([status, fullName])
+}
+
+enum MemberStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model SavingsTransaction {
+  id              String   @id @default(cuid())
+  memberId        String
+  member          Member   @relation(fields: [memberId], references: [id])
+  category        SavingsCategory
+  type            TransactionType
+  amount          Decimal  @db.Decimal(12, 2)
+  date            DateTime
+  referenceNumber String   @unique
+  notes           String?
+  createdBy       String
+  createdByUser   User     @relation("SavingsTransactionCreator", fields: [createdBy], references: [id])
+  
+  createdAt       DateTime @default(now())
+
+  @@index([memberId, date])
+  @@index([category, date])
+}
+
+enum SavingsCategory {
+  POKOK
+  WAJIB
+  SUKARELA
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+}
+
+model Loan {
+  id              String   @id @default(cuid())
+  memberId        String
+  member          Member   @relation(fields: [memberId], references: [id])
+  amount          Decimal  @db.Decimal(12, 2)
+  termMonths      Int
+  applicationDate DateTime
+  notes           String?
+  status          LoanStatus @default(DIAJUKAN)
+  policyId        String?
+  policy          LoanPolicy? @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  appliedPolicyVersion Int?
+  appliedInterestMethod LoanInterestMethod?
+  appliedAnnualRatePercent Decimal? @db.Decimal(7, 4)
+  totalRepaymentAmount Decimal? @db.Decimal(14, 2)
+  activatedAt     DateTime?
+  
+  approvalHistory LoanApprovalHistory[]
+  cancellationRequests LoanCancellationRequest[]
+  installments    InstallmentSchedule[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([memberId, status])
+  @@index([applicationDate])
+}
+
+enum LoanStatus {
+  DIAJUKAN
+  DISETUJUI
+  DITOLAK
+  AKTIF
+  LUNAS
+  DIBATALKAN
+}
+
+enum LoanCancellationStatus {
+  MENUNGGU
+  DISETUJUI
+  DITOLAK
+}
+
+model LoanCancellationRequest {
+  id          String                @id @default(cuid())
+  loanId      String
+  loan        Loan                  @relation(fields: [loanId], references: [id])
+  requestedBy String
+  requester   User                  @relation("LoanCancellationRequester", fields: [requestedBy], references: [id])
+  reason      String
+  status      LoanCancellationStatus @default(MENUNGGU)
+  reviewedBy  String?
+  reviewer    User?                 @relation("LoanCancellationReviewer", fields: [reviewedBy], references: [id])
+  reviewNotes String?
+  createdAt   DateTime              @default(now())
+  reviewedAt  DateTime?
+
+  @@index([loanId, status])
+  @@index([status, createdAt])
+}
+
+enum LoanInterestMethod {
+  NONE
+  FLAT_ANNUAL
+}
+
+model LoanPolicy {
+  id                 String            @id @default(cuid())
+  version            Int               @unique
+  name               String
+  effectiveFrom      DateTime          @unique
+  interestMethod     LoanInterestMethod
+  annualRatePercent  Decimal           @db.Decimal(7, 4)
+  maximumTermMonths  Int
+  firstDueDay        Int
+  createdBy          String
+  createdByUser      User              @relation("LoanPolicyCreator", fields: [createdBy], references: [id])
+  loans              Loan[]
+  createdAt          DateTime           @default(now())
+
+  @@index([effectiveFrom])
+}
+
+model LoanApprovalHistory {
+  id        String   @id @default(cuid())
+  loanId    String
+  loan      Loan     @relation(fields: [loanId], references: [id])
+  status    LoanStatus
+  notes     String?
+  createdBy String
+  createdByUser User @relation("LoanApprovalCreator", fields: [createdBy], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([loanId, createdAt])
+}
+
+model InstallmentSchedule {
+  id              String   @id @default(cuid())
+  loanId          String
+  loan            Loan     @relation(fields: [loanId], references: [id])
+  dueDate         DateTime
+  amountDue       Decimal  @db.Decimal(12, 2)
+  amountPaid      Decimal  @db.Decimal(12, 2) @default(0)
+  status          InstallmentStatus @default(BELUM_DIBAYAR)
+  
+  payments        InstallmentPayment[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([loanId, dueDate])
+  @@index([status, dueDate])
+}
+
+enum InstallmentStatus {
+  BELUM_DIBAYAR
+  SEBAGIAN
+  LUNAS
+  TERLAMBAT
+}
+
+model InstallmentPayment {
+  id                    String   @id @default(cuid())
+  installmentScheduleId String
+  schedule              InstallmentSchedule @relation(fields: [installmentScheduleId], references: [id])
+  amount                Decimal  @db.Decimal(12, 2)
+  date                  DateTime
+  referenceNumber       String   @unique
+  notes                 String?
+  createdBy             String
+  createdByUser         User     @relation("InstallmentPaymentCreator", fields: [createdBy], references: [id])
+  
+  createdAt             DateTime @default(now())
+
+  @@index([installmentScheduleId, date])
+}
+
+model Announcement {
+  id        String   @id @default(cuid())
+  title     String
+  content   String
+  authorId  String
+  author    User     @relation("AnnouncementAuthor", fields: [authorId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
+model AuditRecord {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String
+  entity     String
+  entityId   String
+  details    String
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([entity, entityId])
+}
